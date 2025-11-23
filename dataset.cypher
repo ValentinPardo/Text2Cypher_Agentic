@@ -1,17 +1,17 @@
 // Constraint básicos
 CREATE CONSTRAINT unique_producto IF NOT EXISTS FOR (p:Producto) REQUIRE p.sku IS UNIQUE;
 CREATE CONSTRAINT unique_cliente IF NOT EXISTS FOR (c:Cliente) REQUIRE c.id IS UNIQUE;
-CREATE CONSTRAINT unique_categoria IF NOT EXISTS FOR (cat:Categoria) REQUIRE cat.name IS UNIQUE;
+CREATE CONSTRAINT unique_categoria IF NOT EXISTS FOR (cat:Categoria) REQUIRE cat.nombre IS UNIQUE;
 CREATE CONSTRAINT unique_compra IF NOT EXISTS FOR (o:Compra) REQUIRE o.id IS UNIQUE;
 
-CREATE (cat1:Categoria {name:"Electrónica"});
-CREATE (cat2:Categoria {name:"Computación"});
-CREATE (cat3:Categoria {name:"Accesorios"});
-CREATE (cat4:Categoria {name:"Hogar"});
+CREATE (cat1:Categoria {nombre:"Electrónica"});
+CREATE (cat2:Categoria {nombre:"Computación"});
+CREATE (cat3:Categoria {nombre:"Accesorios"});
+CREATE (cat4:Categoria {nombre:"Hogar"});
 
 CREATE (p1:Producto {
     sku:"NTB-A5-001",
-    name:"Notebook Aspire 5",
+    nombre:"Notebook Aspire 5",
     description:"Notebook de uso general con 8GB RAM y SSD de 512GB. Ideal para estudiantes.",
     precio: 750000,
     stock: 34
@@ -19,7 +19,7 @@ CREATE (p1:Producto {
 
 CREATE (p2:Producto {
     sku:"MON-27-IPS",
-    name:"Monitor 27'' IPS",
+    nombre:"Monitor 27'' IPS",
     description:"Monitor 27 pulgadas IPS 144Hz ideal para oficinas y gaming casual.",
     precio: 320000,
     stock: 12
@@ -27,7 +27,7 @@ CREATE (p2:Producto {
 
 CREATE (p3:Producto {
     sku:"KB-RGB-001",
-    name:"Teclado Mecánico RGB",
+    nombre:"Teclado Mecánico RGB",
     description:"Teclado mecánico con switches blue y retroiluminación RGB.",
     precio: 82000,
     stock: 50
@@ -35,7 +35,7 @@ CREATE (p3:Producto {
 
 CREATE (p4:Producto {
     sku:"MSE-WL-02",
-    name:"Mouse Wireless Logitech",
+    nombre:"Mouse Wireless Logitech",
     description:"Mouse inalámbrico ergonómico ideal para oficina.",
     precio: 35000,
     stock: 80
@@ -43,17 +43,17 @@ CREATE (p4:Producto {
 
 CREATE (p5:Producto {
     sku:"CAF-HOME-01",
-    name:"Cafetera Automática",
+    nombre:"Cafetera Automática",
     description:"Cafetera automática con molinillo integrado y programable.",
     precio: 210000,
     stock: 15
 });
 
-MATCH (p:Producto {sku:"NTB-A5-001"}), (c:Categoria {name:"Computación"}) MERGE (p)-[:PERTENECE_A]->(c);
-MATCH (p:Producto {sku:"MON-27-IPS"}), (c:Categoria {name:"Electrónica"}) MERGE (p)-[:PERTENECE_A]->(c);
-MATCH (p:Producto {sku:"KB-RGB-001"}), (c:Categoria {name:"Computación"}) MERGE (p)-[:PERTENECE_A]->(c);
-MATCH (p:Producto {sku:"MSE-WL-02"}), (c:Categoria {name:"Accesorios"}) MERGE (p)-[:PERTENECE_A]->(c);
-MATCH (p:Producto {sku:"CAF-HOME-01"}), (c:Categoria {name:"Hogar"}) MERGE (p)-[:PERTENECE_A]->(c);
+MATCH (p:Producto {sku:"NTB-A5-001"}), (c:Categoria {nombre:"Computación"}) MERGE (p)-[:PERTENECE_A]->(c);
+MATCH (p:Producto {sku:"MON-27-IPS"}), (c:Categoria {nombre:"Electrónica"}) MERGE (p)-[:PERTENECE_A]->(c);
+MATCH (p:Producto {sku:"KB-RGB-001"}), (c:Categoria {nombre:"Computación"}) MERGE (p)-[:PERTENECE_A]->(c);
+MATCH (p:Producto {sku:"MSE-WL-02"}), (c:Categoria {nombre:"Accesorios"}) MERGE (p)-[:PERTENECE_A]->(c);
+MATCH (p:Producto {sku:"CAF-HOME-01"}), (c:Categoria {nombre:"Hogar"}) MERGE (p)-[:PERTENECE_A]->(c);
 
 CREATE (:Review {
     text:"Muy buena notebook, rápida y silenciosa. Perfecta para estudiar.",

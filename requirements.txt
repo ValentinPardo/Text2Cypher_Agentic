@@ -1,3 +1,4 @@
 graphiti-core
 graphiti-core[google-genai]
 python-dotenv
+google-generativeai
