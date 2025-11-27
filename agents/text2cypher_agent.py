@@ -1,35 +1,57 @@
+# Standard imports
 import asyncio
 import os
 import re
 from dotenv import load_dotenv
-
-from neo4j import AsyncGraphDatabase
-import google.generativeai as genai
+from typing import Any, Dict, Optional
 
 load_dotenv(override=True)
+
+# Try to import optional dependencies; allow module to import even if they're missing (for tests).
+try:
+    from neo4j import AsyncGraphDatabase
+except Exception:
+    AsyncGraphDatabase = None  # type: ignore
+
+try:
+    import google.generativeai as genai
+except Exception:
+    genai = None  # type: ignore
 
 # -------------------------
 # CONFIG
 # -------------------------
 
-NEO4J_URI      = os.getenv("NEO4J_URI")
-NEO4J_USER     = os.getenv("NEO4J_USER")
+NEO4J_URI = os.getenv("NEO4J_URI")
+NEO4J_USER = os.getenv("NEO4J_USER")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASS")
 
 GEMINI_API_KEY = os.getenv("LLM_API_KEY")
 
 SEMAPHORE_LIMIT = int(os.getenv("SEMAPHORE_LIMIT", "1"))
 
-# Inicializar cliente global
-genai.configure(api_key=GEMINI_API_KEY)
+# Create global clients lazily
+_GLOBAL_DRIVER = None
+_GLOBAL_LLM = None
 
-# Crear el modelo para text2cypher
-llm_client = genai.GenerativeModel("gemini-2.0-flash-lite")
+def _get_driver():
+    global _GLOBAL_DRIVER
+    if _GLOBAL_DRIVER is not None:
+        return _GLOBAL_DRIVER
+    if AsyncGraphDatabase is None or not NEO4J_URI:
+        return None
+    _GLOBAL_DRIVER = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    return _GLOBAL_DRIVER
 
-# Neo4j graph interface for the agent
-driver = AsyncGraphDatabase.driver(
-    NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD)
-)
+def _get_llm():
+    global _GLOBAL_LLM
+    if _GLOBAL_LLM is not None:
+        return _GLOBAL_LLM
+    if genai is None or not GEMINI_API_KEY:
+        return None
+    genai.configure(api_key=GEMINI_API_KEY)
+    _GLOBAL_LLM = genai.GenerativeModel("gemini-2.0-flash-lite")
+    return _GLOBAL_LLM
 # -----------------------
 # Esquema para el agente
 # -----------------------
@@ -79,37 +101,45 @@ REGLAS:
 # Función: generar cypher
 # -----------------------
 
-async def generate_cypher(query: str) -> str:
+async def generate_cypher(query: str, mock: bool = False) -> str:
+    """Toma una pregunta en lenguaje natural y genera un Cypher válido.
+
+    Si `mock=True` retorna un Cypher de prueba sin llamar al LLM.
     """
-    Toma una pregunta en lenguaje natural y genera un Cypher válido.
-    """
+    if mock:
+        # Un cypher de ejemplo seguro para pruebas
+        return "MATCH (p:Producto) RETURN p LIMIT 10"
+
+    llm = _get_llm()
+    if llm is None:
+        # No hay LLM disponible en el entorno; devolver NO_CYPHER para evitar falsos positivos
+        return "NO_CYPHER"
+
     prompt = f"""
-        Sos un agente experto en convertir preguntas de lenguaje natural a Cypher, este cypher se utilizara sobre una base de datos basada en Neo4j (grafos).
-        Usá EXCLUSIVAMENTE el siguiente esquema de la base de datos:
+Sos un agente experto en convertir preguntas de lenguaje natural a Cypher, este cypher se utilizara sobre una base de datos basada en Neo4j (grafos).
+Usá EXCLUSIVAMENTE el siguiente esquema de la base de datos:
 
-        {GRAPH_SCHEMA}
+{GRAPH_SCHEMA}
 
-        Convertí la siguiente pregunta a Cypher válido:
-        PREGUNTA: "{query}"
+Convertí la siguiente pregunta a Cypher válido:
+PREGUNTA: "{query}"
 
-        Reglas estrictas:
-        - Devolver SOLO la query Cypher.
-        - No explicar nada.
-        - No agregar texto.
-        - Si no se puede generar un Cypher válido, devolvé "NO_CYPHER".
-        """
+Reglas estrictas:
+- Devolver SOLO la query Cypher.
+- No explicar nada.
+- No agregar texto.
+- Si no se puede generar un Cypher válido, devolvé "NO_CYPHER".
+"""
 
-    response = await llm_client.generate_content_async(
-    [
-        {
-            "role": "user",
-            "parts": [
-                {"text": prompt}
-            ]
-        }
-    ]
+    response = await llm.generate_content_async(
+        [
+            {
+                "role": "user",
+                "parts": [{"text": prompt}],
+            }
+        ]
     )
-    return response.text.strip()
+    return getattr(response, "text", "").strip()
 
 # -----------------------
 # Función: ejecutar cypher en Neo4j
@@ -131,7 +161,15 @@ def clean_cypher(raw: str) -> str:
     
     return cleaned
 
-async def run_cypher(cypher: str):
+async def run_cypher(cypher: str, mock: bool = False):
+    """Ejecuta un Cypher en Neo4j (async). Si `mock=True` devuelve datos de ejemplo."""
+    if mock:
+        return [[{"mock": True, "cypher": cypher}]]
+
+    driver = _get_driver()
+    if driver is None:
+        raise RuntimeError("Neo4j driver not available or NEO4J_URI not set")
+
     async with driver.session() as session:
         result = await session.run(cypher)
         return await result.values()
@@ -140,55 +178,62 @@ async def run_cypher(cypher: str):
 # Función principal del agente
 # -----------------------
 
-async def ask_graph(query: str):
-    cypher = await generate_cypher(query)
+async def ask_graph(query: str, mock: bool = False) -> Dict[str, Any]:
+    """Compatibilidad con la API existente: genera Cypher y lo ejecuta.
+
+    `mock=True` evita llamadas reales a LLM y BD.
+    """
+    cypher = await generate_cypher(query, mock=mock)
 
     if cypher == "NO_CYPHER":
         return {"error": "No se pudo generar un Cypher válido para esta pregunta."}
 
     try:
-        result = run_cypher(cypher)
-        return {
-            "cypher": cypher,
-            "results": result
-        }
+        result = await run_cypher(cypher, mock=mock)
+        return {"cypher": cypher, "results": result}
     except Exception as e:
-        return {
-            "cypher": cypher,
-            "error": str(e)
-        }
+        return {"cypher": cypher, "error": str(e)}
     
 # ----------------------------------------
 # FUNCIÓN PRINCIPAL
 # ----------------------------------------
 
-async def run_query(question: str):
-    print("\n-------------------------------")
-    print("Pregunta:", question)
-    print("-------------------------------\n")
+class Text2CypherNode:
+    """Nodo que expone `async run(inputs: dict) -> dict`.
 
-    raw_cypher = await generate_cypher(question)
-    cypher = clean_cypher(raw_cypher)
+    Inputs esperados: {"query": str, "mock": bool (optional)}
+    Output: {"cypher": str, "results": ...} o {"error": str}
+    """
 
-    print(">> Cypher generado:")
-    print(cypher)
+    def __init__(self, llm: Optional[Any] = None, driver: Optional[Any] = None, model: str = "gemini-2.0-flash-lite", mock: bool = False):
+        self.llm = llm or _get_llm()
+        self.driver = driver or _get_driver()
+        self.model = model
+        self.mock = mock
 
-    if( cypher == "NO_CYPHER"):
-        print("\n>> No se pudo generar un Cypher válido para esta pregunta.")
-        return {
-            "error": "No se pudo generar un Cypher válido para esta pregunta."
-        }
-    search_results = await run_cypher(cypher)
+    async def run(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        query = inputs.get("query") or inputs.get("question")
+        if not query:
+            return {"error": "missing 'query' in inputs"}
 
-    print("\n>> Resultado:")
-    print(search_results)
+        mock = bool(inputs.get("mock", self.mock))
 
-    response = {
-        "cypher": cypher,
-        "results": search_results
-    }
+        raw_cypher = await generate_cypher(query, mock=mock)
+        cypher = clean_cypher(raw_cypher)
 
-    return response
+        if cypher == "NO_CYPHER":
+            return {"error": "No se pudo generar un Cypher válido para esta pregunta."}
+
+        try:
+            results = await run_cypher(cypher, mock=mock)
+            return {"cypher": cypher, "results": results}
+        except Exception as e:
+            return {"cypher": cypher, "error": str(e)}
+
+
+async def run_query(question: str, mock: bool = False):
+    node = Text2CypherNode(mock=mock)
+    return await node.run({"query": question, "mock": mock})
 
 
 # ----------------------------------------
