@@ -1,4 +1,5 @@
 .env
+venv
 graphiti.yml
 GraphitiLoad.py
 __pycache__/
