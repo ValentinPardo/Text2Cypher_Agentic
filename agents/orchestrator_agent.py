@@ -50,67 +50,42 @@ class Orchestrator:
         # If LLM integration is available, ask it (non-blocking call expected by user)
         if _LLM_AVAILABLE and self.llm_api_key:
             try:
+                
                 client = GeminiClient(config=LLMConfig(api_key=self.llm_api_key, model="gemini-2.0-flash-lite"))
-                prompt = f"Decide entre REFINE, QUERY_DB, WEB_SEARCH, ANSWER para: {user_input}. Devuelve solo una palabra."
+                prompt = f"Decide entre QUERY_DB, WEB_SEARCH para: {user_input}. Devuelve solo una palabra."
                 resp = await client.generate_response([create_message(prompt)])
                 decision = resp.get("content", "").strip().upper()
-                if "REFINE" in decision: return "REFINE"
+                # REFINE decision removed: map any refine intent to a DB query
                 if "QUERY_DB" in decision: return "QUERY_DB"
                 if "WEB_SEARCH" in decision: return "WEB_SEARCH"
-                if "ANSWER" in decision: return "ANSWER"
             except Exception:
                 pass
-
-        # Heurística fallback
-        text = user_input.lower()
-        greetings = ["hola", "buen", "gracias", "buenas"]
-        if any(g in text for g in greetings):
-            return "ANSWER"
-        web_indicators = ["noticia", "tendencia", "último", "actualidad", "hoy", "202", "qué es", "qué son", "opinión"]
-        if any(w in text for w in web_indicators):
-            return "WEB_SEARCH"
-        # If the user asks for very structured SQL-like phrases or mentions fields, route to QUERY_DB
-        if any(k in text for k in ["listar", "mostrar", "top", "cantidad", "total", "ordenar"]):
-            return "REFINE"
-
-        # Default conservative: REFINE to improve quality
-        return "REFINE"
+        # Default conservative: route to QUERY_DB (we already refine before deciding)
+        return "QUERY_DB"
 
     async def orchestrate(self, user_input: str) -> Any:
         mock = self.use_mock_by_default
         print(f"\n🤖 [Orchestrator] Recibido: '{user_input}' (mock={mock})")
 
-        route = await self.decide_route(user_input)
-        print(f"🔀 [Orchestrator] Decisión: {route}")
-
-        if route == "ANSWER":
-            # Simple canned responses when in mock mode
-            if mock:
-                return "Hola — soy un asistente de consultas de la base de datos."
-            # If LLM available, generate a short friendly reply
-            if _LLM_AVAILABLE and self.llm_api_key:
-                client = GeminiClient(config=LLMConfig(api_key=self.llm_api_key, model="gemini-2.0-flash-lite"))
-                prompt = f"El usuario dijo: '{user_input}'. Respondé brevemente como asistente de base de datos."
-                resp = await client.generate_response([create_message(prompt)])
-                return resp.get("content", "").strip()
-            return "OK"
-
-        if route == "REFINE":
-            print("   -> Enviando a Refiner Node...")
+        # Primero: ejecutar el RefinerNode siempre y usar su output para la decisión
+        try:
             refiner = self._get_refiner(mock)
             r = await refiner.run({"query": user_input})
-            refined_query = r.get("refined_query") or r.get("error")
-            print(f"✨ [Refiner] Consulta refinada: '{refined_query}'")
+            refined_query = r.get("refined_query") or r.get("error") or user_input
+            print(f"✨ [Refiner] Consulta refinada (pre-decision): '{refined_query}'")
+        except Exception as e:
+            print(f"⚠️  [Refiner] Falló refinamiento inicial: {e}")
+            refined_query = user_input
 
-            print("   -> Enviando a Text2Cypher Node...")
-            text_node = self._get_text2cypher(mock)
-            result = await text_node.run({"query": refined_query, "mock": mock})
-            return result
+        # Decidir la ruta usando la consulta refinada
+        route = await self.decide_route(refined_query)
+        print(f"🔀 [Orchestrator] Decisión: {route}")
 
         if route == "QUERY_DB":
             print("   -> Enviando directo a Text2Cypher Node...")
             text_node = self._get_text2cypher(mock)
-            result = await text_node.run({"query": user_input, "mock": mock})
+            # Usar la consulta refinada como entrada para la query a la DB
+            result = await text_node.run({"query": refined_query, "mock": mock})
             return result
 
         if route == "WEB_SEARCH":
@@ -122,7 +97,6 @@ class Orchestrator:
                 # fallback to refining the raw input
                 refiner = self._get_refiner(mock)
                 r = await refiner.run({"query": user_input})
-                refined_query = r.get("refined_query")
             else:
                 top = web_result.get("results", [])[:3]
                 snippets = []
@@ -132,15 +106,16 @@ class Orchestrator:
                     snippet = content if len(content) <= 500 else content[:497] + "..."
                     snippets.append(f"{title}: {snippet}")
                 context_text = "\n".join(snippets)
-                user_with_context = f"{user_input}\n\nContexto (web):\n{context_text}"
-                refiner = self._get_refiner(mock)
-                r = await refiner.run({"query": user_with_context})
-                refined_query = r.get("refined_query")
-
-            print(f"✨ [Refiner] Consulta refinada (desde WebSearch): '{refined_query}'")
-            print("   -> Enviando a Text2Cypher Node...")
-            text_node = self._get_text2cypher(mock)
-            result = await text_node.run({"query": refined_query, "mock": mock})
+                print(f"✨ Resultados de la busqueda web (desde WebSearch): '{web_result.get('user_friendly')}'")
+            client = GeminiClient(config=LLMConfig(api_key=self.llm_api_key, model="gemini-2.0-flash-lite"))
+            result = await client.generate_response([
+                create_message(
+                    f"Usando los siguientes resultados de búsqueda web como contexto, responde la siguiente pregunta de manera lo mas breve posible:\n\n"
+                    f"Contexto:\n{context_text}\n\n"
+                    f"Consulta original: {user_input}\n\n"
+                    f"Devuelve solo la respuesta concisa si tenes los datos suficientes para responder, sino responde: 'No tengo suficiente información para responderte'."
+                )
+            ])
             return result
 
 

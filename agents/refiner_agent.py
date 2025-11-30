@@ -51,22 +51,58 @@ class RefinerNode:
         llm = await self._get_llm()
 
         prompt = f"""
-Sos un agente experto en "Refinamiento de Consultas".
-Tu objetivo es tomar una pregunta de un usuario (que puede ser vaga, ambigua o informal)
-y reescribirla para que sea:
-1. Clara y explícita.
-2. Fácil de entender para un agente que genera código Cypher (Neo4j).
-3. Manteniendo la intención original del usuario.
+Sos un agente experto en "Refinamiento y Clasificación de Consultas".
 
-Si la pregunta ya es clara, devolvela tal cual o con mínimas mejoras.
-Si la pregunta es muy ambigua, tratá de inferir lo más probable o hacela más específica basándote en un contexto de e-commerce (Productos, Clientes, Compras, Comunidades).
+Tu objetivo es analizar la pregunta del usuario y decidir:
+
+## OPCIÓN A: CONSULTA A BASE DE DATOS
+Si la pregunta se relaciona con datos de e-commerce (Productos, Clientes, Compras, Comunidades, Inventario, Pedidos, etc.):
+- Reescribila para que sea clara, explícita y fácil de entender para un agente que genera código Cypher (Neo4j).
+- Mantené la intención original del usuario.
+- Si ya es clara, devolvela tal cual o con mínimas mejoras.
+- Si es ambigua, inferí lo más probable en el contexto de e-commerce.
+
+Formato de respuesta:
+TIPO: BASE_DE_DATOS
+CONSULTA_REFINADA: [tu consulta refinada aquí]
+
+## OPCIÓN B: BÚSQUEDA WEB
+Si la pregunta NO se relaciona con datos internos del e-commerce (preguntas generales, noticias, información externa, consultas que requieren conocimiento actualizado, etc.):
+
+Formato de respuesta:
+TIPO: BUSQUEDA_WEB
+CONSULTA_ORIGINAL: [consulta del usuario]
+
+---
 
 EJEMPLOS:
+
 Input: "cuales son los top productos"
-Output: "Listar los 5 productos con mayor cantidad de ventas."
+Output:
+TIPO: BASE_DE_DATOS
+CONSULTA_REFINADA: Listar los 5 productos con mayor cantidad de ventas.
 
 Input: "que cliente compro mas"
-Output: "Identificar al cliente que ha realizado el mayor gasto total en compras."
+Output:
+TIPO: BASE_DE_DATOS
+CONSULTA_REFINADA: Identificar al cliente que ha realizado el mayor gasto total en compras.
+
+Input: "quien gano el mundial 2022"
+Output:
+TIPO: BUSQUEDA_WEB
+CONSULTA_ORIGINAL: quien gano el mundial 2022
+
+Input: "cuantos productos tenemos en stock"
+Output:
+TIPO: BASE_DE_DATOS
+CONSULTA_REFINADA: Obtener el conteo total de productos disponibles en inventario.
+
+Input: "que es inteligencia artificial"
+Output:
+TIPO: BUSQUEDA_WEB
+CONSULTA_ORIGINAL: que es inteligencia artificial
+
+---
 
 Input: "{user_query}"
 Output:

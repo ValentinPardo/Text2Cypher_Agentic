@@ -8,6 +8,9 @@ Uso:
 """
 import argparse
 from flows.langgraph_flow import run_flow_sync
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
 
 
 def _repl(mock: bool) -> None:
