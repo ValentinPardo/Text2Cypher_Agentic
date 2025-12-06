@@ -3,23 +3,13 @@ Minimal Web Search Agent for this project.
 
 Uses Google Custom Search API when `GOOGLE_API_KEY` and `GOOGLE_CX` are set.
 Falls back to mock results when Google is not configured or unavailable.
-
-Public API:
- - web_search(question: str, max_results: int=5, use_mock: bool=False) -> dict
-
-Response contract: {
-    'question': str,
-    'optimized_query': str,
-    'results': list[{'title','url','content','score'}],
-    'result_count': int,
-    'success': bool,
-    'error': Optional[str]
-}
 """
 from typing import Dict, Any, List
 import os
 import asyncio
 from typing import Optional
+
+from agents.contracts import State
 
 try:
     import requests
@@ -107,50 +97,50 @@ def _format_user_friendly(question: str, results: List[Dict[str, Any]]) -> str:
 
 
 class WebSearchNode:
-    """Nodo WebSearch con interfaz async `run(inputs: dict) -> dict`.
-
-    Entrada esperada (inputs): {"query": str, "max_results": int (optional), "use_mock": bool (optional)}
-    Salida: contrato idéntico al dict devuelto por la función `web_search` original.
-    """
+    """Nodo WebSearch con interfaz async `run(state: State) -> State`."""
 
     def __init__(self, use_mock: Optional[bool] = None):
         self.use_mock = use_mock
 
-    async def run(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        question = inputs.get("query") or inputs.get("question")
+    async def run(self, state: State) -> State:
+        """Process state and perform web search.
+        
+        Args:
+            state: Current state with query
+            
+        Returns:
+            Updated state with web_result
+        """
+        question = state.get("query", "")
         if not question:
-            return {
+            state["web_result"] = {
                 "question": None,
                 "results": [],
                 "result_count": 0,
                 "success": False,
-                "error": "missing 'query' in inputs",
+                "error": "missing 'query' in state",
             }
+            return state
 
-        max_results = int(inputs.get("max_results", inputs.get("maxResults", 5)))
-        # use_mock = inputs.get("use_mock") if inputs.get("use_mock") is not None else self.use_mock
-        # If still None, derive from env: use mock unless Google keys present and requests available
-        #if use_mock is None:
-        #    use_mock = not (bool(os.getenv("GOOGLE_API_KEY")) and bool(os.getenv("GOOGLE_CX")) and requests is not None)
+        max_results = 5  # Default
+        mock = state.get("mock", False)
+        
+        print(f"🌐 [WebSearch] Searching for: '{question}' (mock={mock})")
 
         try:
-            question
-
-        #    if use_mock:
-        #        results = _mock_search(question)
-        #    else:
-            # Use Google Custom Search (must be configured). If Google returns no results,
-            loop = asyncio.get_running_loop()
-            print("GOOGLE API KEYS PRESENT: " + str(bool(os.getenv("GOOGLE_API_KEY")) and bool(os.getenv("GOOGLE_CX")) and requests is not None))
-            print("api key:" + os.getenv("GOOGLE_API_KEY"))
-            if os.getenv("GOOGLE_API_KEY") and os.getenv("GOOGLE_CX") and requests is not None:
-                results = await loop.run_in_executor(None, _search_with_google, question, max_results)
+            # If mock mode, use mock results
+            if mock:
+                results = _mock_search(question)
             else:
-                results = []
-            #if not results:
-            #    results = _mock_search(question)
+                # Use Google Custom Search (must be configured). If Google returns no results,
+                loop = asyncio.get_running_loop()
+                if os.getenv("GOOGLE_API_KEY") and os.getenv("GOOGLE_CX") and requests is not None:
+                    results = await loop.run_in_executor(None, _search_with_google, question, max_results)
+                else:
+                    print("⚠️  [WebSearch] Google API keys not configured, using mock results")
+                    results = _mock_search(question)
 
-            return {
+            state["web_result"] = {
                 "question": question,
                 "results": results,
                 "result_count": len(results),
@@ -159,8 +149,9 @@ class WebSearchNode:
                 # user-facing string summary of results
                 "user_friendly": _format_user_friendly(question, results),
             }
+            print(f"✅ [WebSearch] Found {len(results)} result(s)")
         except Exception as e:
-            return {
+            state["web_result"] = {
                 "question": question,
                 "results": [],
                 "result_count": 0,
@@ -168,18 +159,36 @@ class WebSearchNode:
                 "error": str(e),
                 "user_friendly": f"Ocurrió un error al buscar en la web: {str(e)}",
             }
+            print(f"❌ [WebSearch] Error: {e}")
+        
+        return state
+
+
+async def web_search_node(state: State) -> State:
+    """LangGraph node function for web search.
+    
+    This is the function that will be added to the LangGraph StateGraph.
+    
+    Args:
+        state: Current state
+        
+    Returns:
+        Updated state with web_result
+    """
+    node = WebSearchNode(use_mock=state.get("mock", False))
+    return await node.run(state)
 
 
 async def web_search(question: str, max_results: int = 5, use_mock: bool = False) -> Dict[str, Any]:
     """Compatibilidad con la API pública existente: llama internamente a `WebSearchNode`."""
     node = WebSearchNode(use_mock=use_mock)
-    res = await node.run({"query": question, "max_results": max_results, "use_mock": use_mock})
-    # Strip internal-only fields before returning to clients. The Refiner node is
-    # responsible for producing optimized queries, so don't expose them here.
+    state = {"query": question, "mock": use_mock, "iteration_count": 0}
+    result_state = await node.run(state)
+    res = result_state.get("web_result", {})
+    # Strip internal-only fields before returning to clients
     res.pop("optimized_query", None)
-    # Optionally don't return the raw 'question' field to the client
     res.pop("question", None)
     return res
 
 
-__all__ = ["WebSearchNode", "web_search"]
+__all__ = ["WebSearchNode", "web_search_node", "web_search"]

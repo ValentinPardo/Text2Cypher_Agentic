@@ -5,6 +5,8 @@ import re
 from dotenv import load_dotenv
 from typing import Any, Dict, Optional
 
+from agents.contracts import State
+
 load_dotenv(override=True)
 
 # Try to import optional dependencies; allow module to import even if they're missing (for tests).
@@ -199,10 +201,7 @@ async def ask_graph(query: str, mock: bool = False) -> Dict[str, Any]:
 # ----------------------------------------
 
 class Text2CypherNode:
-    """Nodo que expone `async run(inputs: dict) -> dict`.
-
-    Inputs esperados: {"query": str, "mock": bool (optional)}
-    Output: {"cypher": str, "results": ...} o {"error": str}
+    """Nodo que expone `async run(state: State) -> State`.
     """
 
     def __init__(self, llm: Optional[Any] = None, driver: Optional[Any] = None, model: str = "gemini-2.0-flash-lite", mock: bool = False):
@@ -211,29 +210,62 @@ class Text2CypherNode:
         self.model = model
         self.mock = mock
 
-    async def run(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        query = inputs.get("query") or inputs.get("question")
+    async def run(self, state: State) -> State:
+        """Process state and generate Cypher query + results.
+        
+        Args:
+            state: Current state with query or refined_query
+            
+        Returns:
+            Updated state with cypher_result
+        """
+        # Use refined_query if available, otherwise use original query
+        query = state.get("refined_query") or state.get("query", "")
         if not query:
-            return {"error": "missing 'query' in inputs"}
+            state["error"] = "missing 'query' in state"
+            return state
 
-        mock = bool(inputs.get("mock", self.mock))
+        mock = state.get("mock", self.mock)
+        
+        print(f"🔍 [Text2Cypher] Processing query: '{query}' (mock={mock})")
 
         raw_cypher = await generate_cypher(query, mock=mock)
         cypher = clean_cypher(raw_cypher)
 
         if cypher == "NO_CYPHER":
-            return {"error": "No se pudo generar un Cypher válido para esta pregunta."}
+            state["cypher_result"] = {"error": "No se pudo generar un Cypher válido para esta pregunta."}
+            return state
 
         try:
             results = await run_cypher(cypher, mock=mock)
-            return {"cypher": cypher, "results": results}
+            state["cypher_result"] = {"cypher": cypher, "results": results}
+            print(f"✅ [Text2Cypher] Query successful: {len(results)} result(s)")
         except Exception as e:
-            return {"cypher": cypher, "error": str(e)}
+            state["cypher_result"] = {"cypher": cypher, "error": str(e)}
+            print(f"❌ [Text2Cypher] Query failed: {e}")
+        
+        return state
+
+
+async def text2cypher_node(state: State) -> State:
+    """LangGraph node function for text2cypher.
+    
+    This is the function that will be added to the LangGraph StateGraph.
+    
+    Args:
+        state: Current state
+        
+    Returns:
+        Updated state with cypher_result
+    """
+    node = Text2CypherNode(mock=state.get("mock", False))
+    return await node.run(state)
 
 
 async def run_query(question: str, mock: bool = False):
     node = Text2CypherNode(mock=mock)
-    return await node.run({"query": question, "mock": mock})
+    state = {"query": question, "mock": mock, "iteration_count": 0}
+    return await node.run(state)
 
 
 # ----------------------------------------
@@ -244,3 +276,6 @@ if __name__ == "__main__":
     asyncio.run(run_query(
         "Mostrame los primeros 5 productos que tienen embeddings generados."
     ))
+
+
+__all__ = ["Text2CypherNode", "text2cypher_node", "run_query"]

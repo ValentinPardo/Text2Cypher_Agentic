@@ -1,6 +1,15 @@
+"""
+Refiner Agent - Refines and clarifies user queries.
+
+This agent takes ambiguous or vague queries and refines them to be more clear
+and explicit for downstream agents (especially Text2Cypher).
+"""
 import os
+import asyncio
 from dotenv import load_dotenv
-from typing import Any, Dict, Optional
+from typing import Any, Optional
+
+from agents.contracts import State
 
 load_dotenv(override=True)
 
@@ -17,11 +26,8 @@ GEMINI_API_KEY = os.getenv("LLM_API_KEY")
 
 
 class RefinerNode:
-    """Nodo Refiner con interfaz async `run(inputs: dict) -> dict`.
-
-    Entrada esperada (inputs): {"query": str}
-    Salida: {"refined_query": str} o {"error": str}
-
+    """Nodo Refiner con interfaz async `run(state: State) -> State`.
+    
     Esta clase soporta `mock=True` para evitar llamadas reales al LLM durante pruebas.
     """
 
@@ -39,68 +45,66 @@ class RefinerNode:
             raise RuntimeError("Gemini client not available in environment")
         return GeminiClient(config=LLMConfig(api_key=GEMINI_API_KEY, model=self.model))
 
-    async def run(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        user_query = inputs.get("query") or inputs.get("user_query")
+    async def run(self, state: State) -> State:
+        """Refine the query in the state.
+        
+        Args:
+            state: Current state with query
+            
+        Returns:
+            Updated state with refined_query and incremented iteration_count
+        """
+        user_query = state.get("query", "")
+        mock = state.get("mock", self.mock)
+        iteration_count = state.get("iteration_count", 0)
+        
         if not user_query:
-            return {"error": "missing 'query' in inputs"}
+            state["error"] = "missing 'query' in state"
+            return state
 
-        if self.mock:
+        print(f"✨ [Refiner] Refining query: '{user_query}' (iteration={iteration_count})")
+
+        if mock:
             # Return a deterministic mock for local testing
-            return {"refined_query": f"(MOCK) {user_query.strip()}"}
+            state["refined_query"] = f"(REFINED) {user_query.strip()}"
+            state["iteration_count"] = iteration_count + 1
+            return state
 
         llm = await self._get_llm()
 
         prompt = f"""
-Sos un agente experto en "Refinamiento y Clasificación de Consultas".
+Sos un agente experto en "Refinamiento de Consultas para E-commerce".
 
-Tu objetivo es analizar la pregunta del usuario y decidir:
+Tu objetivo es analizar la pregunta del usuario y refinarla para que sea clara, explícita y fácil de entender para un agente que genera código Cypher (Neo4j) sobre una base de datos de e-commerce.
 
-## OPCIÓN A: CONSULTA A BASE DE DATOS
-Si la pregunta se relaciona con datos de e-commerce (Productos, Clientes, Compras, Comunidades, Inventario, Pedidos, etc.):
-- Reescribila para que sea clara, explícita y fácil de entender para un agente que genera código Cypher (Neo4j).
-- Mantené la intención original del usuario.
-- Si ya es clara, devolvela tal cual o con mínimas mejoras.
-- Si es ambigua, inferí lo más probable en el contexto de e-commerce.
+Contexto de la base de datos:
+- Productos (id, nombre, descripcion, precio, stock)
+- Clientes (id, nombre, direccion, telefono, email)
+- Compras (id, fecha, total)
+- Comunidades (id, nombre, descripcion, tipo)
+- Relaciones: Cliente REALIZÓ_COMPRA Compra, Compra INCLUYE Producto, Producto INVENTARIO Comunidad
 
-Formato de respuesta:
-TIPO: BASE_DE_DATOS
-CONSULTA_REFINADA: [tu consulta refinada aquí]
+Reglas para refinamiento:
+1. Mantén la intención original del usuario
+2. Si la consulta es vaga o ambigua, inferí lo más probable en el contexto de e-commerce
+3. Si menciona "top", "mejor", "mayor", especifica un límite razonable (ej: top 5, top 10)
+4. Si es sobre clientes/productos/ventas, clarifica qué información específica se busca
+5. Si ya es clara, devolvela tal cual o con mínimas mejoras
+6. Devuelve SOLO la consulta refinada, sin explicaciones adicionales
 
-## OPCIÓN B: BÚSQUEDA WEB
-Si la pregunta NO se relaciona con datos internos del e-commerce (preguntas generales, noticias, información externa, consultas que requieren conocimiento actualizado, etc.):
+Ejemplos:
 
-Formato de respuesta:
-TIPO: BUSQUEDA_WEB
-CONSULTA_ORIGINAL: [consulta del usuario]
-
----
-
-EJEMPLOS:
-
-Input: "cuales son los top productos"
-Output:
-TIPO: BASE_DE_DATOS
-CONSULTA_REFINADA: Listar los 5 productos con mayor cantidad de ventas.
+Input: "top productos"
+Output: Listar los 5 productos con mayor cantidad de ventas.
 
 Input: "que cliente compro mas"
-Output:
-TIPO: BASE_DE_DATOS
-CONSULTA_REFINADA: Identificar al cliente que ha realizado el mayor gasto total en compras.
+Output: Identificar al cliente que ha realizado el mayor gasto total en compras.
 
-Input: "quien gano el mundial 2022"
-Output:
-TIPO: BUSQUEDA_WEB
-CONSULTA_ORIGINAL: quien gano el mundial 2022
+Input: "productos en stock"
+Output: Obtener todos los productos que tienen stock disponible (stock > 0).
 
-Input: "cuantos productos tenemos en stock"
-Output:
-TIPO: BASE_DE_DATOS
-CONSULTA_REFINADA: Obtener el conteo total de productos disponibles en inventario.
-
-Input: "que es inteligencia artificial"
-Output:
-TIPO: BUSQUEDA_WEB
-CONSULTA_ORIGINAL: que es inteligencia artificial
+Input: "info de ventas"
+Output: Obtener información detallada de todas las compras realizadas, incluyendo fecha y total.
 
 ---
 
@@ -124,15 +128,33 @@ Output:
             content = getattr(response, "content", None)
 
         if not content:
-            return {"error": "LLM returned empty content"}
+            state["error"] = "LLM returned empty content"
+            return state
 
         refined = content.strip()
-        return {"refined_query": refined}
+        
+        # Update state
+        state["refined_query"] = refined
+        state["iteration_count"] = iteration_count + 1
+        
+        print(f"✨ [Refiner] Refined to: '{refined}'")
+        
+        return state
 
 
-async def run(inputs: Dict[str, Any], mock: bool = False) -> Dict[str, Any]:
-    node = RefinerNode(mock=mock)
-    return await node.run(inputs)
+async def refiner_node(state: State) -> State:
+    """LangGraph node function for the refiner.
+    
+    This is the function that will be added to the LangGraph StateGraph.
+    
+    Args:
+        state: Current state
+        
+    Returns:
+        Updated state with refined_query
+    """
+    node = RefinerNode(mock=state.get("mock", False))
+    return await node.run(state)
 
 
-__all__ = ["RefinerNode", "run"]
+__all__ = ["RefinerNode", "refiner_node"]
