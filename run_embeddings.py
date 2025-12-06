@@ -16,10 +16,12 @@ NEO4J_PASSWORD = os.getenv("NEO4J_PASS")
 
 GEMINI_API_KEY = os.getenv("LLM_API_KEY")
 
-embedder = GeminiEmbedder(config=GeminiEmbedderConfig( api_key=GEMINI_API_KEY, embedding_model="gemini-embedding-001"))
+# Embedding model configurable via env
+GEMINI_EMBED_MODEL = os.getenv("GEMINI_EMBED_MODEL", "gemini-embedding-001")
+embedder = GeminiEmbedder(config=GeminiEmbedderConfig(api_key=GEMINI_API_KEY, embedding_model=GEMINI_EMBED_MODEL))
 
-EMBED_MODEL = "models/embedding-001"   # Gemini embedding model
-EMBED_PROPERTY = "embedding"           # where to store the vector
+EMBED_MODEL = os.getenv("EMBED_MODEL", "models/embedding-001")   # Gemini embedding model
+EMBED_PROPERTY = os.getenv("EMBED_PROPERTY", "embedding")       # where to store the vector
 
 # What labels to embed
 TARGET_LABELS = ["Producto", "Cliente", "Compra"]   # lo que vos tengas

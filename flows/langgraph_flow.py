@@ -75,13 +75,12 @@ def create_graph() -> StateGraph:
 app = create_graph()
 
 
-def run_flow(user_input: str, mock: bool = True) -> Dict[str, Any]:
+def run_flow(user_input: str) -> Dict[str, Any]:
     """Execute the LangGraph flow synchronously.
-    
+
     Args:
         user_input: User's query or question
-        mock: Whether to use mock mode (avoids real API calls)
-        
+
     Returns:
         Final state dict with all fields including final_answer
     """
@@ -95,23 +94,21 @@ def run_flow(user_input: str, mock: bool = True) -> Dict[str, Any]:
         raise RuntimeError("run_flow should not be called from async context. Use run_flow_async instead.")
     except RuntimeError:
         # No event loop running, we can create one
-        return asyncio.run(run_flow_async(user_input, mock))
+        return asyncio.run(run_flow_async(user_input))
 
 
-async def run_flow_async(user_input: str, mock: bool = True) -> Dict[str, Any]:
+async def run_flow_async(user_input: str) -> Dict[str, Any]:
     """Execute the LangGraph flow asynchronously.
-    
+
     Args:
         user_input: User's query or question
-        mock: Whether to use mock mode (avoids real API calls)
-        
+
     Returns:
         Final state dict with all fields including final_answer
     """
     print(f"\n{'='*60}")
     print(f"🚀 Starting LangGraph Flow")
     print(f"   Query: {user_input}")
-    print(f"   Mock: {mock}")
     print(f"{'='*60}\n")
     
     # Initialize state
@@ -124,7 +121,6 @@ async def run_flow_async(user_input: str, mock: bool = True) -> Dict[str, Any]:
         "final_answer": None,
         "error": None,
         "iteration_count": 0,
-        "mock": mock,
     }
     
     # Invoke the graph asynchronously
@@ -161,11 +157,11 @@ if __name__ == "__main__":
     
     async def main():
         # Test with a simple query
-        result = await run_flow_async("Hola", mock=True)
+        result = await run_flow_async("Hola")
         print(f"\nFinal Answer: {result.get('final_answer')}")
-        
+
         # Test with a database query
-        result = await run_flow_async("¿Cuáles son los top 5 productos?", mock=True)
+        result = await run_flow_async("¿Cuáles son los top 5 productos?")
         print(f"\nFinal Answer: {result.get('final_answer')}")
     
     asyncio.run(main())

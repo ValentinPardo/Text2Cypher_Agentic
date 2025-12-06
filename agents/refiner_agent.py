@@ -28,21 +28,21 @@ GEMINI_API_KEY = os.getenv("LLM_API_KEY")
 class RefinerNode:
     """Nodo Refiner con interfaz async `run(state: State) -> State`.
     
-    Esta clase soporta `mock=True` para evitar llamadas reales al LLM durante pruebas.
+    Esta clase refina consultas usando un LLM si está configurado.
     """
 
-    def __init__(self, llm: Optional[Any] = None, model: str = "gemini-2.0-flash-lite", mock: bool = False):
+    def __init__(self, llm: Optional[Any] = None, model: Optional[str] = None):
         self._provided_llm = llm
-        self.model = model
-        self.mock = bool(mock)
+        # prefer explicit model, otherwise read from env
+        self.model = model or os.getenv("LLM_MODEL", "gemini-2.5-flash-lite")
 
     async def _get_llm(self) -> Any:
         if self._provided_llm is not None:
             return self._provided_llm
-        if self.mock:
-            return None
         if GeminiClient is None or LLMConfig is None:
             raise RuntimeError("Gemini client not available in environment")
+        if not GEMINI_API_KEY:
+            return None
         return GeminiClient(config=LLMConfig(api_key=GEMINI_API_KEY, model=self.model))
 
     async def run(self, state: State) -> State:
@@ -55,7 +55,7 @@ class RefinerNode:
             Updated state with refined_query and incremented iteration_count
         """
         user_query = state.get("query", "")
-        mock = state.get("mock", self.mock)
+        # Always use LLM if available
         iteration_count = state.get("iteration_count", 0)
         
         if not user_query:
@@ -63,12 +63,6 @@ class RefinerNode:
             return state
 
         print(f"✨ [Refiner] Refining query: '{user_query}' (iteration={iteration_count})")
-
-        if mock:
-            # Return a deterministic mock for local testing
-            state["refined_query"] = f"(REFINED) {user_query.strip()}"
-            state["iteration_count"] = iteration_count + 1
-            return state
 
         llm = await self._get_llm()
 
@@ -153,7 +147,7 @@ async def refiner_node(state: State) -> State:
     Returns:
         Updated state with refined_query
     """
-    node = RefinerNode(mock=state.get("mock", False))
+    node = RefinerNode()
     return await node.run(state)
 
 

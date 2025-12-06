@@ -3,8 +3,8 @@
 Uso:
   - Modo REPL (por defecto):
     python run_langgraph_flow.py
-  - Modo single-shot:
-    python run_langgraph_flow.py --input "Mostrar top productos" --mock
+    - Modo single-shot:
+        python run_langgraph_flow.py --input "Mostrar top productos"
 """
 import argparse
 from dotenv import load_dotenv
@@ -12,12 +12,12 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 
-async def _repl_async(mock: bool) -> None:
+async def _repl_async() -> None:
     """Async REPL that maintains the event loop for all queries."""
     banner = (
-        "Iniciando REPL del Flow (modo mock=%s).\n"
+        "Iniciando REPL del Flow.\n"
         "Escribí tu pregunta y presioná Enter. Salir: 'salir', 'exit', 'quit' o Ctrl+C.\n"
-    ) % ("ON" if mock else "OFF")
+    )
     print(banner)
     
     from flows.langgraph_flow import run_flow_async
@@ -42,7 +42,7 @@ async def _repl_async(mock: bool) -> None:
 
             try:
                 # Execute the flow and get final state (async)
-                final_state = await run_flow_async(user_input, mock=mock)
+                final_state = await run_flow_async(user_input)
                 
                 # Display the final answer
                 print("\n--- Respuesta Final ---")
@@ -64,10 +64,10 @@ async def _repl_async(mock: bool) -> None:
         print("\nInterrupción por teclado. Saliendo.")
 
 
-def _repl(mock: bool) -> None:
+def _repl() -> None:
     """Wrapper to run async REPL in a persistent event loop."""
     import asyncio
-    asyncio.run(_repl_async(mock))
+    asyncio.run(_repl_async())
 
 
 async def _main_async(args) -> None:
@@ -76,7 +76,7 @@ async def _main_async(args) -> None:
     
     try:
         # Execute the flow and get final state
-        final_state = await run_flow_async(args.input, mock=args.mock)
+        final_state = await run_flow_async(args.input)
         
         # Display the final answer
         print("\n--- Respuesta Final ---")
@@ -108,14 +108,13 @@ def main() -> None:
     
     parser = argparse.ArgumentParser(description="Runner para flows/langgraph_flow")
     parser.add_argument("--input", "-i", help="Consulta de usuario a ejecutar en el flow (si se omite, se inicia REPL)")
-    parser.add_argument("--mock", action="store_true", help="Ejecutar en modo mock (sin LLM/BD reales)")
     parser.add_argument("--debug", action="store_true", help="Mostrar información de debug completa")
     args = parser.parse_args()
 
     if args.input:
         asyncio.run(_main_async(args))
     else:
-        _repl(mock=args.mock)
+        _repl()
 
 
 if __name__ == "__main__":

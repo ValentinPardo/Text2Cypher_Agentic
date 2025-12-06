@@ -1,13 +1,19 @@
 """
-Minimal Web Search Agent for this project.
+Web Search Agent using Google Custom Search.
 
-Uses Google Custom Search API when `GOOGLE_API_KEY` and `GOOGLE_CX` are set.
-Falls back to mock results when Google is not configured or unavailable.
+This node exposes an async `run(state: State) -> State` function that reads
+`state['query']` and populates `state['web_result']` with a client-friendly
+summary and raw results.
+
+It no longer contains any mock-mode branches; if Google credentials are not
+configured the node will return an empty results list and a user-friendly
+message indicating no external data was found.
 """
 from typing import Dict, Any, List
 import os
 import asyncio
 from typing import Optional
+from urllib.parse import urlparse
 
 from agents.contracts import State
 
@@ -17,28 +23,8 @@ except Exception:
     requests = None
 
 
-def _mock_search(query: str) -> List[Dict[str, Any]]:
-    return [
-        {
-            "title": f"Mock Result 1 for '{query}'",
-            "url": "https://example.com/result1",
-            "content": f"This is a mock search result for the query: {query}.",
-            "score": 0.95,
-        },
-        {
-            "title": f"Mock Result 2 for '{query}'",
-            "url": "https://example.com/result2",
-            "content": f"Another mock result for: {query}.",
-            "score": 0.87,
-        },
-    ]
-
 def _search_with_google(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
-    """Use Google Custom Search JSON API to perform a web search.
-
-    Requires `GOOGLE_API_KEY` and `GOOGLE_CX` set in env.
-    Returns a list of dicts with keys: title, url, content, score.
-    """
+    """Call Google Custom Search JSON API and return normalized results list."""
     api_key = os.getenv("GOOGLE_API_KEY")
     cx = os.getenv("GOOGLE_CX")
     if not api_key or not cx or requests is None:
@@ -60,7 +46,6 @@ def _search_with_google(query: str, max_results: int = 5) -> List[Dict[str, Any]
             title = it.get("title", "")
             link = it.get("link", "")
             snippet = it.get("snippet", "")
-            # score: use -rank or rely on order (higher first)
             score = 1.0 - (i * 0.01)
             results.append({
                 "title": title,
@@ -78,116 +63,113 @@ def _format_user_friendly(question: str, results: List[Dict[str, Any]]) -> str:
     if not results:
         return f"No encontré información relevante en la web sobre '{question}'. Puedo intentar buscar nuevamente o ayudarte con otra consulta."
 
-    # Build a short human-friendly summary using top 1-3 results
     top = results[:3]
+    # Filter out entries with no useful text to avoid empty bullets
+    filtered = []
+    for r in top:
+        title = (r.get("title") or "").strip()
+        content = (r.get("content") or "").strip()
+        url = (r.get("url") or "").strip()
+        if title or content or url:
+            filtered.append({"title": title or "(sin título)", "content": content, "url": url})
+
     lines = []
     lines.append(f"He encontrado {len(results)} resultados en la web para: '{question}'. Aquí un resumen de los más relevantes:")
-    for i, r in enumerate(top, start=1):
-        title = r.get("title", "(sin título)")
-        url = r.get("url", "")
-        content = r.get("content", "").strip()
-        snippet = content if len(content) <= 200 else content[:197] + "..."
-        if url:
-            lines.append(f"{i}. {title} — {snippet} (ver: {url})")
-        else:
-            lines.append(f"{i}. {title} — {snippet}")
+    if not filtered:
+        lines.append("No se encontraron extractos útiles en los resultados para resumir.")
+    else:
+        for i, r in enumerate(filtered, start=1):
+            title = r.get("title", "(sin título)")
+            url = r.get("url", "")
+            content = r.get("content", "")
+            snippet = content if len(content) <= 200 else content[:197] + "..."
+            # Use parenthesis numbering to avoid sentence-splitting on '1.'
+            if url:
+                lines.append(f"{i}) {title} — {snippet} (ver: {url}).")
+            else:
+                lines.append(f"{i}) {title} — {snippet}.")
 
     lines.append("Si querés, puedo intentar obtener más detalles de alguna de estas fuentes o convertir esto en una respuesta más formal para un cliente.")
     return "\n".join(lines)
 
 
 class WebSearchNode:
-    """Nodo WebSearch con interfaz async `run(state: State) -> State`."""
+    """Nodo WebSearch con interfaz async `run(state: State) -> State`.
 
-    def __init__(self, use_mock: Optional[bool] = None):
-        self.use_mock = use_mock
+    Lee `state['query']` y escribe `state['web_result']`.
+    """
 
     async def run(self, state: State) -> State:
-        """Process state and perform web search.
-        
-        Args:
-            state: Current state with query
-            
-        Returns:
-            Updated state with web_result
-        """
         question = state.get("query", "")
         if not question:
             state["web_result"] = {
-                "question": None,
                 "results": [],
                 "result_count": 0,
                 "success": False,
                 "error": "missing 'query' in state",
+                "user_friendly": "No se proporcionó ninguna consulta para buscar.",
             }
             return state
 
-        max_results = 5  # Default
-        mock = state.get("mock", False)
-        
-        print(f"🌐 [WebSearch] Searching for: '{question}' (mock={mock})")
+        max_results = int(state.get("max_results", 5))
 
         try:
-            # If mock mode, use mock results
-            if mock:
-                results = _mock_search(question)
-            else:
-                # Use Google Custom Search (must be configured). If Google returns no results,
-                loop = asyncio.get_running_loop()
-                if os.getenv("GOOGLE_API_KEY") and os.getenv("GOOGLE_CX") and requests is not None:
-                    results = await loop.run_in_executor(None, _search_with_google, question, max_results)
-                else:
-                    print("⚠️  [WebSearch] Google API keys not configured, using mock results")
-                    results = _mock_search(question)
+            loop = asyncio.get_running_loop()
+            results = []
+            if os.getenv("GOOGLE_API_KEY") and os.getenv("GOOGLE_CX") and requests is not None:
+                results = await loop.run_in_executor(None, _search_with_google, question, max_results)
+
+            # Optionally filter results by allowed domains for this application
+            allowed = os.getenv("WEB_SEARCH_DOMAINS")
+            filtered_results = results
+            filtered_by_domain = True
+            if allowed:
+                allowed_set = [d.strip().lower() for d in allowed.split(",") if d.strip()]
+                def _domain_ok(url: str) -> bool:
+                    try:
+                        netloc = urlparse(url).netloc.lower()
+                    except Exception:
+                        return False
+                    for a in allowed_set:
+                        if netloc.endswith(a):
+                            return True
+                    return False
+
+                filtered_results = [r for r in results if r.get("url") and _domain_ok(r.get("url"))]
+                if not filtered_results:
+                    filtered_by_domain = False
 
             state["web_result"] = {
-                "question": question,
-                "results": results,
-                "result_count": len(results),
+                "results": filtered_results,
+                "result_count": len(filtered_results),
                 "success": True,
                 "error": None,
-                # user-facing string summary of results
-                "user_friendly": _format_user_friendly(question, results),
+                "user_friendly": _format_user_friendly(question, filtered_results) if filtered_results else ("No se encontraron resultados en los dominios permitidos. Si querés, puedo ampliar la búsqueda fuera de esos dominios."),
+                "_filtered_by_domain": filtered_by_domain,
+                "_original_count": len(results),
             }
-            print(f"✅ [WebSearch] Found {len(results)} result(s)")
         except Exception as e:
             state["web_result"] = {
-                "question": question,
                 "results": [],
                 "result_count": 0,
                 "success": False,
                 "error": str(e),
                 "user_friendly": f"Ocurrió un error al buscar en la web: {str(e)}",
             }
-            print(f"❌ [WebSearch] Error: {e}")
-        
         return state
 
 
 async def web_search_node(state: State) -> State:
-    """LangGraph node function for web search.
-    
-    This is the function that will be added to the LangGraph StateGraph.
-    
-    Args:
-        state: Current state
-        
-    Returns:
-        Updated state with web_result
-    """
-    node = WebSearchNode(use_mock=state.get("mock", False))
+    node = WebSearchNode()
     return await node.run(state)
 
 
-async def web_search(question: str, max_results: int = 5, use_mock: bool = False) -> Dict[str, Any]:
-    """Compatibilidad con la API pública existente: llama internamente a `WebSearchNode`."""
-    node = WebSearchNode(use_mock=use_mock)
-    state = {"query": question, "mock": use_mock, "iteration_count": 0}
+async def web_search(question: str, max_results: int = 5) -> Dict[str, Any]:
+    """Public helper that returns a client-friendly dict (no internal keys)."""
+    node = WebSearchNode()
+    state = {"query": question, "max_results": max_results, "iteration_count": 0}
     result_state = await node.run(state)
     res = result_state.get("web_result", {})
-    # Strip internal-only fields before returning to clients
-    res.pop("optimized_query", None)
-    res.pop("question", None)
     return res
 
 

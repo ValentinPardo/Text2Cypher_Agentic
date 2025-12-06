@@ -18,7 +18,6 @@ class State(TypedDict, total=False):
         final_answer: Final formatted answer for the user
         error: Any error that occurred during processing
         iteration_count: Counter to prevent infinite loops
-        mock: Whether to use mock mode (for testing)
     """
     query: str
     refined_query: Optional[str]
@@ -28,7 +27,7 @@ class State(TypedDict, total=False):
     final_answer: Optional[str]
     error: Optional[str]
     iteration_count: int
-    mock: bool
+    
 
 
 __all__ = ["State"]
