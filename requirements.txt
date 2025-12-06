@@ -2,3 +2,9 @@ graphiti-core
 graphiti-core[google-genai]
 python-dotenv
 google-generativeai
+langchain>=0.0.300
+langgraph>=0.1.0
+pydantic>=1.10
+
+requests
+python-dotenv
