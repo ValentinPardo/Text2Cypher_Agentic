@@ -77,15 +77,10 @@ Opciones disponibles:
    - Definiciones generales, conocimiento externo
    - Información que NO está en la base de datos de e-commerce
    
-4. **REFINER** - Si la consulta necesita clarificación:
-   - Consultas ambiguas o vagas
-   - Preguntas incompletas
-   - Consultas que necesitan más contexto antes de procesarse
-
 REGLAS:
 - Usa tu inteligencia para determinar la intención real del usuario
 - No te bases solo en palabras clave
-- Devuelve SOLO UNA PALABRA: ANSWERER, TEXT_TO_CYPHER, WEB_SEARCH, o REFINER""",
+- Devuelve SOLO UNA PALABRA: ANSWERER, TEXT_TO_CYPHER o WEB_SEARCH""",
                 role="model"
             )
             
@@ -103,8 +98,6 @@ REGLAS:
                 return "text_to_cypher"
             if "WEB_SEARCH" in decision or "WEB" in decision:
                 return "web_search"
-            if "REFINER" in decision or "REFINE" in decision:
-                return "refiner"
             if "ANSWERER" in decision or "ANSWER" in decision:
                 return "answerer"
             

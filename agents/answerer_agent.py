@@ -67,11 +67,13 @@ class AnswererNode:
         cypher_result = state.get("cypher_result")
         web_result = state.get("web_result")
         
-        # Format cypher results
-        if cypher_result:
+        # Format cypher results only if we have a structured dict
+        if isinstance(cypher_result, dict) and cypher_result:
             final_answer = await self._format_cypher_response(query, cypher_result)
             state["final_answer"] = final_answer
             return state
+        # If cypher_result is a sentinel string (e.g. 're-routing to web'), skip
+        # to web_result so we don't attempt to call .get() on a str.
         
         # Format web search results
         if web_result:

@@ -23,6 +23,40 @@ from agents.web_search_agent import web_search_node
 from agents.answerer_agent import answerer_node
 
 
+def text2cypher_route_decision(state: State) -> str:
+    """Decide whether to go to `answerer` or `web_search` after text2cypher.
+
+    Returns 'answerer' when DB results are present and non-empty; otherwise 'web_search'.
+    """
+    cy = state.get("cypher_result")
+    print(f"🔀 [Text2CypherRouter] cypher_result present: {bool(cy)}")
+    # Canonical sentinel from text2cypher indicating we must re-route to web
+    if cy == "re-routing to web":
+        print("🔀 [Text2CypherRouter] Detected re-routing sentinel; routing to web_search")
+        return "web_search"
+
+    if not cy:
+        return "web_search"
+
+    # If explicit error, prefer web_search
+    if isinstance(cy, dict) and any(k in cy for k in ("error", "errors", "exception")):
+        return "web_search"
+
+    # Look for 'results' with truthy content
+    if isinstance(cy, dict) and cy.get("results"):
+        results = cy.get("results")
+        try:
+            if hasattr(results, "__len__") and len(results) > 0:
+                return "answerer"
+        except Exception:
+            # if results truthy but not length-checkable
+            if results:
+                return "answerer"
+
+    # Fallback: no usable DB result -> web_search
+    return "web_search"
+
+
 def create_graph() -> StateGraph:
     """Create and configure the LangGraph StateGraph.
     
@@ -40,26 +74,31 @@ def create_graph() -> StateGraph:
     graph.add_node("answerer", answerer_node)
     
     # Add edges
-    # START -> orchestrator
-    graph.add_edge(START, "orchestrator")
-    
+    # START -> refiner
+    graph.add_edge(START, "refiner")
+
+    graph.add_edge("refiner", "orchestrator")
+
     # Conditional edges from orchestrator (using route_decision function)
     graph.add_conditional_edges(
         "orchestrator",
         route_decision,
         {
-            "refiner": "refiner",
             "text_to_cypher": "text_to_cypher",
             "web_search": "web_search",
             "answerer": "answerer",
         }
     )
     
-    # refiner -> orchestrator (refiner sends back to orchestrator for re-routing)
-    graph.add_edge("refiner", "orchestrator")
-    
-    # text_to_cypher -> answerer
-    graph.add_edge("text_to_cypher", "answerer")
+    # text_to_cypher -> answerer OR web_search (conditional)
+    graph.add_conditional_edges(
+        "text_to_cypher",
+        text2cypher_route_decision,
+        {
+            "answerer": "answerer",
+            "web_search": "web_search",
+        }
+    )
     
     # web_search -> answerer
     graph.add_edge("web_search", "answerer")

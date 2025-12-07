@@ -282,30 +282,35 @@ class Text2CypherNode:
         cypher = clean_cypher(raw_cypher)
 
         if cypher == "NO_CYPHER":
-            # Provide explicit guidance when no Cypher could be generated
-            if llm is None:
-                state["cypher_result"] = {"error": "No se pudo generar un Cypher válido: LLM no configurado (ver LLM_API_KEY o instalación del cliente)."}
-            else:
-                state["cypher_result"] = {"error": "No se pudo generar un Cypher válido para esta pregunta."}
+            # Standardized sentinel for the router to trigger web search
+            state["cypher_result"] = "re-routing to web"
             return state
 
         # If Neo4j driver is not available, return the Cypher without executing it
         if driver is None:
-            # Annotate if the Cypher was produced via minimal fallback due to missing LLM
-            note_parts = ["Neo4j driver not available; cypher returned without execution."]
-            if llm is None:
-                note_parts.append("LLM not configured; minimal rule-based fallback may have been used.")
-            state["cypher_result"] = {"cypher": cypher, "results": [], "note": " ".join(note_parts)}
-            print(f"⚠️ [Text2Cypher] Neo4j driver not available; returning Cypher without execution: {cypher}")
+            # If we cannot execute against Neo4j, signal to re-route to web
+            state["cypher_result"] = "re-routing to web"
+            print(f"⚠️ [Text2Cypher] Neo4j driver not available; signaling re-route to web")
             return state
 
         try:
             results = await run_cypher(cypher, driver=driver)
-            state["cypher_result"] = {"cypher": cypher, "results": results}
-            print(f"✅ [Text2Cypher] Query successful: {len(results)} result(s)")
+            # If the DB returned no rows, signal the canonical sentinel so the flow
+            # will route to web_search.
+            if not results or (hasattr(results, "__len__") and len(results) == 0):
+                state["cypher_result"] = "re-routing to web"
+                print(f"⚠️ [Text2Cypher] Query returned no results; signaling re-route to web")
+            else:
+                state["cypher_result"] = {"cypher": cypher, "results": results}
+                try:
+                    count = len(results)
+                except Exception:
+                    count = 1
+                print(f"✅ [Text2Cypher] Query successful: {count} result(s)")
         except Exception as e:
-            state["cypher_result"] = {"cypher": cypher, "error": str(e)}
-            print(f"❌ [Text2Cypher] Query failed: {e}")
+            # On unexpected execution errors, route to web to attempt external search
+            state["cypher_result"] = "re-routing to web"
+            print(f"❌ [Text2Cypher] Query failed; signaling re-route to web: {e}")
         
         return state
 

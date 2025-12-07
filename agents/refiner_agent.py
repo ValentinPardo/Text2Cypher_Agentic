@@ -61,6 +61,20 @@ class RefinerNode:
         if not user_query:
             state["error"] = "missing 'query' in state"
             return state
+        # If the query is a simple conversational interaction (greeting, thanks,
+        # short help request), skip calling the LLM and return immediately so
+        # the orchestrator can handle it (avoid wasting LLM calls).
+        uq = user_query.strip()
+        uq_low = uq.lower()
+        conversational_triggers = [
+            "hola", "buenos d", "buenas tardes", "buenas noches", "hi", "hello",
+            "gracias", "gracias!", "adiós", "adios", "bye", "chau", "help",
+            "ayuda", "qué puedes hacer", "que puedes hacer", "qué puedes hacer?", "que puedes hacer?"
+        ]
+        # If any trigger appears in the first few words, treat as conversational
+        if any(tok in uq_low for tok in conversational_triggers) and len(uq.split()) <= 8:
+            print(f"✨ [Refiner] Detected conversational query; skipping refinement and returning to orchestrator: '{user_query}'")
+            return state
 
         print(f"✨ [Refiner] Refining query: '{user_query}' (iteration={iteration_count})")
 
