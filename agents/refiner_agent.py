@@ -5,7 +5,6 @@ This agent takes ambiguous or vague queries and refines them to be more clear
 and explicit for downstream agents (especially Text2Cypher).
 """
 import os
-import asyncio
 from dotenv import load_dotenv
 from typing import Any, Optional
 
@@ -16,6 +15,7 @@ load_dotenv(override=True)
 # Optional import of the project's Gemini client; lazy-instantiated when needed.
 try:
     from graphiti_core.llm_client.gemini_client import GeminiClient, LLMConfig
+    from helpers.llm_helper import create_message
 except Exception:
     GeminiClient = None  # type: ignore
     LLMConfig = None  # type: ignore
@@ -66,10 +66,11 @@ class RefinerNode:
 
         llm = await self._get_llm()
 
-        prompt = f"""
-Sos un agente experto en "Refinamiento de Consultas para E-commerce".
+        # System message: instructions, rules, context
+        system_message = create_message(
+            """Sos un agente experto en "Refinamiento de Consultas para E-commerce".
 
-Tu objetivo es analizar la pregunta del usuario y refinarla para que sea clara, explícita y fácil de entender para un agente que genera código Cypher (Neo4j) sobre una base de datos de e-commerce.
+Tu objetivo es analizar preguntas de usuarios y refinarlas para que sean claras, explícitas y fáciles de entender para un agente que genera código Cypher (Neo4j) sobre una base de datos de e-commerce.
 
 Contexto de la base de datos:
 - Productos (id, nombre, descripcion, precio, stock)
@@ -87,32 +88,20 @@ Reglas para refinamiento:
 6. Devuelve SOLO la consulta refinada, sin explicaciones adicionales
 
 Ejemplos:
+- Input: "top productos" → Output: "Listar los 5 productos con mayor cantidad de ventas."
+- Input: "que cliente compro mas" → Output: "Identificar al cliente que ha realizado el mayor gasto total en compras."
+- Input: "productos en stock" → Output: "Obtener todos los productos que tienen stock disponible (stock > 0)."
+- Input: "info de ventas" → Output: "Obtener información detallada de todas las compras realizadas, incluyendo fecha y total.\"""",
+            role="model"
+        )
 
-Input: "top productos"
-Output: Listar los 5 productos con mayor cantidad de ventas.
+        # User message: only the dynamic query to refine
+        user_message = create_message(
+            f"Consulta a refinar: {user_query}",
+            role="user"
+        )
 
-Input: "que cliente compro mas"
-Output: Identificar al cliente que ha realizado el mayor gasto total en compras.
-
-Input: "productos en stock"
-Output: Obtener todos los productos que tienen stock disponible (stock > 0).
-
-Input: "info de ventas"
-Output: Obtener información detallada de todas las compras realizadas, incluyendo fecha y total.
-
----
-
-Input: "{user_query}"
-Output:
-""".format(user_query=user_query)
-
-        # Enviar al LLM y obtener respuesta
-        try:
-            from helpers.llm_helper import create_message
-        except Exception as e:  # pragma: no cover - fallback for environments lacking graphiti_core
-            raise RuntimeError("helpers.llm_helper not available; cannot call LLM") from e
-
-        response = await llm.generate_response([create_message(prompt)])
+        response = await llm.generate_response([system_message, user_message])
 
         # Normalizar respuesta
         content = None

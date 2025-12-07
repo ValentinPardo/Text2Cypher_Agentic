@@ -103,27 +103,36 @@ class AnswererNode:
             return f"Encontré {len(results)} resultado(s) en la base de datos. Resultados: {str(results)[:500]}"
         
         # Use LLM to format a natural response
-        prompt = f"""
-Eres un asistente experto en e-commerce. Un usuario hizo la siguiente pregunta:
-"{query}"
+        # System message: instructions and rules
+        system_message = create_message(
+            """Eres un asistente experto en e-commerce.
 
-Se ejecutó una consulta Cypher en la base de datos Neo4j:
-{cypher_query}
+Tu tarea es tomar resultados de consultas a la base de datos y presentarlos de manera natural y comprensible para el usuario.
 
-Resultados obtenidos:
-{results}
-
-Por favor, genera una respuesta natural, clara y concisa en español para el usuario.
+Reglas:
 - Si no hay resultados, informa amablemente que no se encontró información.
 - Si hay resultados, preséntelos de manera organizada y fácil de entender.
 - No menciones términos técnicos como "Cypher" o "Neo4j" al usuario.
 - Sé breve pero informativo.
+- Responde siempre en español.""",
+            role="system"
+        )
+        
+        # User message: dynamic query and results
+        user_message = create_message(
+            f"""Pregunta del usuario: {query}
 
-Respuesta:
-"""
+Consulta ejecutada: {cypher_query}
+
+Resultados obtenidos:
+{results}
+
+Genera una respuesta natural para el usuario.""",
+            role="user"
+        )
         
         try:
-            response = await llm.generate_response([create_message(prompt)])
+            response = await llm.generate_response([system_message, user_message])
             content = response.get("content", "").strip() if isinstance(response, dict) else getattr(response, "content", "").strip()
             return content if content else "Procesé tu consulta pero no pude generar una respuesta adecuada."
         except Exception as e:
@@ -166,12 +175,11 @@ Respuesta:
         else:
             topics_instruction = "- Si pregunta por tus capacidades: explica brevemente qué puedes hacer (consultar productos, inventario y compras)."
 
-        prompt = f"""
-Eres un asistente virtual amigable y profesional para un sistema de e-commerce.
+        # System message: instructions and personality
+        system_message = create_message(
+            f"""Eres un asistente virtual amigable y profesional para un sistema de e-commerce.
 
-El usuario ha dicho: "{query}"
-
-Tu trabajo es generar una respuesta natural y contextualmente apropiada. Considera:
+Tu trabajo es generar respuestas naturales y contextualmente apropiadas. Considera:
 
 - Si es un saludo (hola, buenos días, etc.): Responde amablemente y explica brevemente qué puedes hacer
 - Si es un agradecimiento (gracias, etc.): Responde con cortesía y disponibilidad para más ayuda
@@ -183,13 +191,18 @@ IMPORTANTE:
 - Mantén un tono amigable pero profesional
 - Sé conciso pero informativo
 - Responde en español
-- No inventes información técnica o datos
-
-Respuesta:
-"""
+- No inventes información técnica o datos""",
+            role="system"
+        )
+        
+        # User message: only the dynamic input
+        user_message = create_message(
+            f"Usuario dice: {query}",
+            role="user"
+        )
         
         try:
-            response = await llm.generate_response([create_message(prompt)])
+            response = await llm.generate_response([system_message, user_message])
             content = response.get("content", "").strip() if isinstance(response, dict) else getattr(response, "content", "").strip()
             return content if content else "¿En qué puedo ayudarte hoy?"
         except Exception as e:
@@ -330,32 +343,35 @@ Respuesta:
         if web_domains_env:
             domains_list = ", ".join([d.strip() for d in web_domains_env.split(",") if d.strip()])
             instructions.append(f"IMPORTANTE: Además, para búsquedas web solo considerar resultados de los dominios: {domains_list}.")
-        domain_instruction = "\n\n".join(instructions) + ("\n\n" if instructions else "")
+        domain_instruction = "\n\n".join(instructions) if instructions else ""
 
-        # Use LLM to generate a concise SYNTHESIS (RESUMEN) of the web results
-        prompt = f"""
-    {domain_instruction}
-    A partir de los siguientes títulos y extractos de búsqueda, genera UN RESUMEN SINTÉTICO en español que responda DIRECTAMENTE a la pregunta del usuario.
+        # System message: instructions and rules
+        system_content = f"""A partir de títulos y extractos de búsqueda web, genera UN RESUMEN SINTÉTICO en español que responda DIRECTAMENTE a la pregunta del usuario.
 
-    Requisitos estrictos:
-    - Máximo 2 oraciones.
-    - Máximo 40 palabras en total.
-    - Primera oración: respuesta directa y clara (por ejemplo: "Argentina ganó la Copa Mundial 2022.").
-    - Segunda oración (opcional): una frase muy breve de contexto o dato clave.
-    - No listar, no citar fragmentos textuales, no introducir la respuesta con frases como "He encontrado..." o "Según...".
+{domain_instruction}
 
-    Si la información es insuficiente para dar una respuesta concreta, responde en UNA sola oración: "No hay suficiente información en las fuentes para responder con seguridad."
+Requisitos estrictos:
+- Máximo 2 oraciones.
+- Máximo 40 palabras en total.
+- Primera oración: respuesta directa y clara (por ejemplo: "Argentina ganó la Copa Mundial 2022.").
+- Segunda oración (opcional): una frase muy breve de contexto o dato clave.
+- No listar, no citar fragmentos textuales, no introducir la respuesta con frases como "He encontrado..." o "Según...".
 
-    Pregunta: {query}
+Si la información es insuficiente para dar una respuesta concreta, responde en UNA sola oración: "No hay suficiente información en las fuentes para responder con seguridad.\""""
 
-    Fuentes (no incluir literalmente):
-    {context_text}
+        system_message = create_message(system_content, role="system")
 
-    Resumen:
-    """
+        # User message: query and sources
+        user_message = create_message(
+            f"""Pregunta: {query}
+
+Fuentes de búsqueda web (no incluir literalmente):
+{context_text}""",
+            role="user"
+        )
         
         try:
-            response = await llm.generate_response([create_message(prompt)])
+            response = await llm.generate_response([system_message, user_message])
             content = response.get("content", "").strip() if isinstance(response, dict) else getattr(response, "content", "").strip()
             content = content or ""
             brief = self._shorten_text(content, max_sentences=2, max_words=60)

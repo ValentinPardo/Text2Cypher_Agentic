@@ -7,7 +7,6 @@ This agent analyzes the user query and decides which agent should handle it:
 - text_to_cypher: Database queries about e-commerce data
 - web_search: General knowledge questions requiring web search
 """
-import asyncio
 import os
 from typing import Literal
 from dotenv import load_dotenv
@@ -55,12 +54,11 @@ class OrchestratorNode:
             model_name = os.getenv("LLM_MODEL", "gemini-2.5-flash-lite")
             client = GeminiClient(config=LLMConfig(api_key=self.llm_api_key, model=model_name))
             
-            prompt = f"""
-Eres un orquestador experto que clasifica consultas de usuario para un sistema de e-commerce.
+            # System message: instructions, rules, personality
+            system_message = create_message(
+                """Eres un orquestador experto que clasifica consultas de usuario para un sistema de e-commerce.
 
-Analiza la siguiente consulta y decide la mejor ruta:
-
-Consulta: "{query_to_analyze}"
+Tu tarea es analizar cada consulta y decidir la mejor ruta de procesamiento.
 
 Opciones disponibles:
 
@@ -84,12 +82,20 @@ Opciones disponibles:
    - Preguntas incompletas
    - Consultas que necesitan más contexto antes de procesarse
 
-IMPORTANTE: Usa tu inteligencia para determinar la intención real del usuario. No te bases solo en palabras clave.
-
-Devuelve SOLO UNA PALABRA: ANSWERER, TEXT_TO_CYPHER, WEB_SEARCH, o REFINER
-"""
+REGLAS:
+- Usa tu inteligencia para determinar la intención real del usuario
+- No te bases solo en palabras clave
+- Devuelve SOLO UNA PALABRA: ANSWERER, TEXT_TO_CYPHER, WEB_SEARCH, o REFINER""",
+                role="model"
+            )
             
-            response = await client.generate_response([create_message(prompt)])
+            # User message: only the dynamic query
+            user_message = create_message(
+                f"Consulta a clasificar: {query_to_analyze}",
+                role="user"
+            )
+            
+            response = await client.generate_response([system_message, user_message])
             decision = response.get("content", "").strip().upper() if isinstance(response, dict) else ""
             
             # Map decision to route

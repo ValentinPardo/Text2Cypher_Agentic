@@ -12,7 +12,6 @@ message indicating no external data was found.
 from typing import Dict, Any, List
 import os
 import asyncio
-from typing import Optional
 from urllib.parse import urlparse
 
 from agents.contracts import State
